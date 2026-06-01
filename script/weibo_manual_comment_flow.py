@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import json
 import os
 import re
 import sys
@@ -103,6 +104,35 @@ def configure_wslg_env():
 def safe_stem(text: str, limit: int = 48) -> str:
     cleaned = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "_", text).strip("_")
     return (cleaned or "comment")[:limit]
+
+
+def emit_evidence_event(event_type: str, payload: dict):
+    event = {"type": event_type, **payload}
+    print(f"EVIDENCE={json.dumps(event, ensure_ascii=False, sort_keys=True)}", flush=True)
+
+
+def build_like_evidence(status: str | None, selector: str | None, state: dict | None):
+    return {
+        "type": "like",
+        "status": status,
+        "selector": selector,
+        "state": state,
+    }
+
+
+def build_submission_evidence(
+    submit_selector: str | None,
+    wait_result: str | None,
+    login_required: bool,
+    comment_visible: bool,
+):
+    return {
+        "type": "submission",
+        "submit_selector": submit_selector,
+        "wait_result": wait_result,
+        "login_required": login_required,
+        "comment_visible": comment_visible,
+    }
 
 
 def first_visible_locator(root, selectors: list[str], timeout: int = 3000):
@@ -445,7 +475,8 @@ def main():
 
         print(f"[2/5] Opening: {args.url}", flush=True)
         page.goto(args.url, wait_until="domcontentloaded")
-        wait_for_page_ready(page, context="initial-load", readiness_selectors=PAGE_READY_SELECTORS, networkidle_timeout=10000)
+        initial_wait_result = wait_for_page_ready(page, context="initial-load", readiness_selectors=PAGE_READY_SELECTORS, networkidle_timeout=10000)
+        emit_evidence_event("wait", {"context": "initial-load", "result": initial_wait_result})
 
         if page_requires_login(page):
             print("检测到当前页面处于登录/风控态，请先完成登录后再继续。", flush=True)
@@ -455,6 +486,7 @@ def main():
         if args.like:
             print("[2.5/5] Ensuring the post is liked...", flush=True)
             like_status, like_selector, like_state = ensure_post_liked(page)
+            emit_evidence_event("like", build_like_evidence(like_status, like_selector, like_state))
             if like_status is None:
                 print("未自动找到点赞按钮。", flush=True)
             else:
@@ -487,18 +519,30 @@ def main():
                 browser.close()
                 sys.exit(5)
             print(f"已点击提交按钮，按钮选择器: {submit_selector}", flush=True)
-            wait_for_page_ready(
+            submit_wait_result = wait_for_page_ready(
                 page,
                 context="after-submit",
                 readiness_selectors=COMMENT_ROOT_SELECTORS + LOGGED_IN_COMPOSER_SELECTORS,
                 networkidle_timeout=6000,
                 fallback_wait_ms=1500,
             )
-            if page_requires_login(page):
+            emit_evidence_event("wait", {"context": "after-submit", "result": submit_wait_result})
+            login_required_after_submit = page_requires_login(page)
+            comment_visible_after_submit = verify_comment_submission(page, args.comment)
+            emit_evidence_event(
+                "submission",
+                build_submission_evidence(
+                    submit_selector=submit_selector,
+                    wait_result=submit_wait_result,
+                    login_required=login_required_after_submit,
+                    comment_visible=comment_visible_after_submit,
+                ),
+            )
+            if login_required_after_submit:
                 print("提交后页面进入登录/风控态，未确认评论成功发布。", flush=True)
                 browser.close()
                 sys.exit(7)
-            if not verify_comment_submission(page, args.comment):
+            if not comment_visible_after_submit:
                 print("未确认评论成功出现在评论区，停止后续截图以避免假阳性。", flush=True)
                 page.screenshot(path=str(raw_path), full_page=True)
                 print(f"RAW_SCREENSHOT={raw_path.resolve()}", flush=True)
@@ -516,13 +560,14 @@ def main():
 
         print("[4/5] Trying to locate your comment on the page...", flush=True)
         page.bring_to_front()
-        wait_for_page_ready(
+        locate_wait_result = wait_for_page_ready(
             page,
             context="before-locate-comment",
             readiness_selectors=COMMENT_ROOT_SELECTORS + ['article'],
             networkidle_timeout=5000,
             fallback_wait_ms=1000,
         )
+        emit_evidence_event("wait", {"context": "before-locate-comment", "result": locate_wait_result})
         if ensure_time_sort(page):
             print("已切换评论排序到：按时间", flush=True)
         else:
