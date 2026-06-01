@@ -59,6 +59,26 @@ LOGGED_IN_COMPOSER_SELECTORS = [
     'div[role="textbox"]',
 ]
 
+COMMENT_COMPOSER_SELECTORS = [
+    '[data-testid="comment-composer"] textarea',
+    '[data-testid="comment-composer"] [contenteditable="true"]',
+    '.woo-box-item-flex textarea',
+    '.woo-box-item-flex [contenteditable="true"]',
+    '.comment textarea',
+    '.comment [contenteditable="true"]',
+    'textarea',
+    'div[role="textbox"]',
+    'div[contenteditable="plaintext-only"]',
+    '[contenteditable="true"]',
+]
+
+TIME_SORT_ACTIVE_SELECTORS = [
+    '[aria-checked="true"]:has-text("按时间")',
+    '[aria-current="true"]:has-text("按时间")',
+    '[aria-selected="true"]:has-text("按时间")',
+    '.woo-tab-item-main[aria-selected="true"]:has-text("按时间")',
+]
+
 
 def configure_wslg_env():
     """Make headed Chromium work reliably when launched from non-interactive WSL shells."""
@@ -110,6 +130,53 @@ def page_requires_login(page) -> bool:
 
 def comment_text_selectors(comment_text: str) -> list[str]:
     return [selector.format(comment_text=comment_text) for selector in COMMENT_TEXT_SELECTORS]
+
+
+def is_liked_state(state: dict | None) -> bool:
+    if not state:
+        return False
+    class_name = (state.get('className') or '').lower()
+    count_class = (state.get('countClass') or '').lower()
+    title = (state.get('title') or '').strip()
+    text = (state.get('text') or '').strip()
+    return (
+        'woo-like-liked' in count_class
+        or 'liked' in class_name
+        or title in {'已赞', '取消赞'}
+        or text.startswith('已赞')
+    )
+
+
+def choose_highlight_box(text_box: dict | None, expanded_box: dict | None):
+    if expanded_box and expanded_box.get('width', 0) > 0 and expanded_box.get('height', 0) > 0:
+        return expanded_box
+    return text_box
+
+
+def normalize_crop_box(crop_box: dict, highlight_box: dict):
+    x = max(int(crop_box['x']), 0)
+    y = max(int(crop_box['y']), 0)
+    right = max(int(crop_box['right']), int(highlight_box['right']))
+    bottom = max(int(crop_box['bottom']), int(highlight_box['bottom']))
+    if right <= x:
+        right = max(int(highlight_box['right']), x + max(int(highlight_box.get('width', 1)), 1))
+    if bottom <= y:
+        bottom = max(int(highlight_box['bottom']), y + max(int(highlight_box.get('height', 1)), 1))
+    return {'x': x, 'y': y, 'right': right, 'bottom': bottom}
+
+
+def ensure_time_sort(page) -> bool:
+    try:
+        target = page.get_by_text('按时间').first
+        if target.count() > 0 and target.is_visible(timeout=1000):
+            target.click(timeout=5000)
+            if hasattr(page, 'wait_for_timeout'):
+                page.wait_for_timeout(2000)
+            active, _ = first_visible_locator(page, TIME_SORT_ACTIVE_SELECTORS, timeout=1000)
+            return active is not None
+    except Exception:
+        return False
+    return False
 
 
 def find_comment_locator_in_root(root, comment_text: str):
@@ -239,12 +306,7 @@ def save_contextual_crop(full_raw_path: Path, focused_raw_path: Path, focused_bo
 
 
 def fill_comment_box(page, comment_text: str):
-    selectors = [
-        'textarea',
-        '[contenteditable="true"]',
-        'div[role="textbox"]',
-        'div[contenteditable="plaintext-only"]',
-    ]
+    selectors = COMMENT_COMPOSER_SELECTORS
     for selector in selectors:
         locator = page.locator(selector).first
         try:
@@ -288,7 +350,7 @@ def ensure_post_liked(page):
                 })
                 """
             )
-            if 'woo-like-liked' in (state.get('countClass') or '') or 'liked' in (state.get('className') or ''):
+            if is_liked_state(state):
                 return 'already-liked', selector, state
             locator.click(timeout=3000)
             page.wait_for_timeout(1500)
@@ -302,7 +364,7 @@ def ensure_post_liked(page):
                 })
                 """
             )
-            if 'woo-like-liked' in (after.get('countClass') or '') or 'liked' in (after.get('className') or ''):
+            if is_liked_state(after):
                 return 'liked-now', selector, after
             return 'clicked-unknown', selector, after
         except Exception:
@@ -422,11 +484,9 @@ def main():
             page.wait_for_load_state("networkidle", timeout=5000)
         except PlaywrightTimeoutError:
             pass
-        try:
-            page.get_by_text("按时间").first.click(timeout=5000)
-            page.wait_for_timeout(2000)
+        if ensure_time_sort(page):
             print("已切换评论排序到：按时间", flush=True)
-        except Exception:
+        else:
             print("未能切换到“按时间”，将按当前排序继续查找。", flush=True)
 
         if page_requires_login(page):
@@ -450,7 +510,6 @@ def main():
             pass
 
         text_box = locator_document_box(locator)
-        highlight_box = locator_document_box(locator, '.item1, .wbpro-list, .woo-box-flex.item1in, .con1, .text')
         if not text_box:
             print("评论已找到，但无法读取其坐标。仅输出原始截图。", flush=True)
             page.screenshot(path=str(raw_path), full_page=True)
@@ -458,6 +517,12 @@ def main():
             print("BOXED_SCREENSHOT=NOT_FOUND", flush=True)
             browser.close()
             sys.exit(3)
+        highlight_box = choose_highlight_box(
+            text_box,
+            locator_document_box(locator, '.item1, .wbpro-list, .woo-box-flex.item1in, .con1, .text')
+        )
+        if not highlight_box:
+            highlight_box = text_box
 
         article_box, article_selector = first_visible_document_box(page, ['article', '.wbpro-feed-content'])
         if not article_box:
@@ -469,12 +534,12 @@ def main():
             }
             article_selector = 'fallback'
 
-        crop_box = {
+        crop_box = normalize_crop_box({
             'x': max(min(article_box['x'], highlight_box['x']) - 20, 0),
             'y': max(article_box['y'] - 20, 0),
             'right': max(article_box['right'], highlight_box['right']) + 20,
             'bottom': highlight_box['bottom'] + 80,
-        }
+        }, highlight_box)
 
         print("[5/5] Saving full-page screenshot...", flush=True)
         page.screenshot(path=str(raw_path), full_page=True)
