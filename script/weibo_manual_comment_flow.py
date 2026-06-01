@@ -135,6 +135,40 @@ def build_submission_evidence(
     }
 
 
+def build_final_summary(
+    *,
+    status: str,
+    initial_wait_result: str | None = None,
+    submit_wait_result: str | None = None,
+    locate_wait_result: str | None = None,
+    like_status: str | None = None,
+    submission_confirmed: bool | None = None,
+    comment_found: bool | None = None,
+    login_required: bool | None = None,
+    primary_mode: str | None = None,
+    final_screenshot: str | None = None,
+):
+    return {
+        "type": "final-summary",
+        "status": status,
+        "wait": {
+            "initial_load": initial_wait_result,
+            "after_submit": submit_wait_result,
+            "before_locate_comment": locate_wait_result,
+        },
+        "like_status": like_status,
+        "submission_confirmed": submission_confirmed,
+        "comment_found": comment_found,
+        "login_required": login_required,
+        "primary_mode": primary_mode,
+        "final_screenshot": final_screenshot,
+    }
+
+
+def emit_final_summary(payload: dict):
+    print(f"FINAL_SUMMARY={json.dumps(payload, ensure_ascii=False, sort_keys=True)}", flush=True)
+
+
 def first_visible_locator(root, selectors: list[str], timeout: int = 3000):
     for selector in selectors:
         locator = root.locator(selector).first
@@ -472,6 +506,15 @@ def main():
         )
         page = browser.new_page()
         page.set_default_timeout(15000)
+        initial_wait_result = None
+        submit_wait_result = None
+        locate_wait_result = None
+        like_status = None
+        login_required_after_submit = None
+        comment_visible_after_submit = None
+        comment_found = False
+        primary_mode = None
+        final_screenshot = None
 
         print(f"[2/5] Opening: {args.url}", flush=True)
         page.goto(args.url, wait_until="domcontentloaded")
@@ -479,6 +522,13 @@ def main():
         emit_evidence_event("wait", {"context": "initial-load", "result": initial_wait_result})
 
         if page_requires_login(page):
+            emit_final_summary(
+                build_final_summary(
+                    status="login-required-initial",
+                    initial_wait_result=initial_wait_result,
+                    login_required=True,
+                )
+            )
             print("检测到当前页面处于登录/风控态，请先完成登录后再继续。", flush=True)
             browser.close()
             sys.exit(6)
@@ -539,14 +589,39 @@ def main():
                 ),
             )
             if login_required_after_submit:
+                emit_final_summary(
+                    build_final_summary(
+                        status="login-required-after-submit",
+                        initial_wait_result=initial_wait_result,
+                        submit_wait_result=submit_wait_result,
+                        like_status=like_status,
+                        submission_confirmed=False,
+                        comment_found=False,
+                        login_required=True,
+                    )
+                )
                 print("提交后页面进入登录/风控态，未确认评论成功发布。", flush=True)
                 browser.close()
                 sys.exit(7)
             if not comment_visible_after_submit:
                 print("未确认评论成功出现在评论区，停止后续截图以避免假阳性。", flush=True)
                 page.screenshot(path=str(raw_path), full_page=True)
+                final_screenshot = str(raw_path.resolve())
                 print(f"RAW_SCREENSHOT={raw_path.resolve()}", flush=True)
                 print("BOXED_SCREENSHOT=NOT_FOUND", flush=True)
+                emit_final_summary(
+                    build_final_summary(
+                        status="submission-not-confirmed",
+                        initial_wait_result=initial_wait_result,
+                        submit_wait_result=submit_wait_result,
+                        like_status=like_status,
+                        submission_confirmed=False,
+                        comment_found=False,
+                        login_required=False,
+                        primary_mode="full_page",
+                        final_screenshot=final_screenshot,
+                    )
+                )
                 browser.close()
                 sys.exit(8)
         elif args.capture_only:
@@ -574,6 +649,18 @@ def main():
             print("未能切换到“按时间”，将按当前排序继续查找。", flush=True)
 
         if page_requires_login(page):
+            emit_final_summary(
+                build_final_summary(
+                    status="login-required-before-capture",
+                    initial_wait_result=initial_wait_result,
+                    submit_wait_result=submit_wait_result,
+                    locate_wait_result=locate_wait_result,
+                    like_status=like_status,
+                    submission_confirmed=comment_visible_after_submit,
+                    comment_found=False,
+                    login_required=True,
+                )
+            )
             print("截图前检测到页面回到了登录/风控态，停止以避免误框。", flush=True)
             browser.close()
             sys.exit(9)
@@ -582,11 +669,27 @@ def main():
         if locator is None:
             print("未能直接定位到评论文本。正在截全页原图，供后续人工检查。", flush=True)
             page.screenshot(path=str(raw_path), full_page=True)
+            final_screenshot = str(raw_path.resolve())
             print(f"RAW_SCREENSHOT={raw_path.resolve()}", flush=True)
             print("BOXED_SCREENSHOT=NOT_FOUND", flush=True)
+            emit_final_summary(
+                build_final_summary(
+                    status="comment-not-found",
+                    initial_wait_result=initial_wait_result,
+                    submit_wait_result=submit_wait_result,
+                    locate_wait_result=locate_wait_result,
+                    like_status=like_status,
+                    submission_confirmed=comment_visible_after_submit,
+                    comment_found=False,
+                    login_required=False,
+                    primary_mode="full_page",
+                    final_screenshot=final_screenshot,
+                )
+            )
             browser.close()
             sys.exit(2)
 
+        comment_found = True
         print(f"找到评论，使用选择器: {selector}", flush=True)
         try:
             locator.scroll_into_view_if_needed(timeout=3000)
@@ -597,8 +700,23 @@ def main():
         if not text_box:
             print("评论已找到，但无法读取其坐标。仅输出原始截图。", flush=True)
             page.screenshot(path=str(raw_path), full_page=True)
+            final_screenshot = str(raw_path.resolve())
             print(f"RAW_SCREENSHOT={raw_path.resolve()}", flush=True)
             print("BOXED_SCREENSHOT=NOT_FOUND", flush=True)
+            emit_final_summary(
+                build_final_summary(
+                    status="comment-found-no-box",
+                    initial_wait_result=initial_wait_result,
+                    submit_wait_result=submit_wait_result,
+                    locate_wait_result=locate_wait_result,
+                    like_status=like_status,
+                    submission_confirmed=comment_visible_after_submit,
+                    comment_found=True,
+                    login_required=False,
+                    primary_mode="full_page",
+                    final_screenshot=final_screenshot,
+                )
+            )
             browser.close()
             sys.exit(3)
         highlight_box = choose_highlight_box(
@@ -635,6 +753,7 @@ def main():
         primary_raw_path = raw_path if args.full_page_primary else focused_raw_path
         primary_boxed_path = boxed_path if args.full_page_primary else focused_boxed_path
         primary_mode = "full_page" if args.full_page_primary else "contextual"
+        final_screenshot = str(primary_boxed_path.resolve())
 
         print(f"POST_SELECTOR={article_selector}", flush=True)
         print(f"PRIMARY_MODE={primary_mode}", flush=True)
@@ -644,6 +763,20 @@ def main():
         print(f"FULL_BOXED_SCREENSHOT={boxed_path.resolve()}", flush=True)
         print(f"CONTEXT_RAW_SCREENSHOT={focused_raw_path.resolve()}", flush=True)
         print(f"CONTEXT_BOXED_SCREENSHOT={focused_boxed_path.resolve()}", flush=True)
+        emit_final_summary(
+            build_final_summary(
+                status="ok",
+                initial_wait_result=initial_wait_result,
+                submit_wait_result=submit_wait_result,
+                locate_wait_result=locate_wait_result,
+                like_status=like_status,
+                submission_confirmed=comment_visible_after_submit,
+                comment_found=comment_found,
+                login_required=False,
+                primary_mode=primary_mode,
+                final_screenshot=final_screenshot,
+            )
+        )
         print("[5/5++] Closing page/context while preserving login state in the persistent profile...", flush=True)
         page.close()
         browser.close()
