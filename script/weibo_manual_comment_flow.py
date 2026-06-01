@@ -13,6 +13,52 @@ from PIL import Image, ImageDraw
 OUTPUT_DIR = Path.home() / "outputs/weibo-comment-shots"
 PROFILE_DIR = Path.home() / ".playwright-weibo-profile"
 
+COMMENT_TEXT_SELECTORS = [
+    'text={comment_text}',
+    'blockquote:has-text("{comment_text}")',
+    'div:has-text("{comment_text}")',
+    'span:has-text("{comment_text}")',
+    'p:has-text("{comment_text}")',
+]
+
+COMMENT_ROOT_SELECTORS = [
+    '.WB_feed_detail, [data-testid="comment-list"], .woo-box-flex.woo-box-alignCenter.woo-box-justifyBetween',
+    '[data-testid="comment-list"]',
+    '.WB_feed_detail',
+    '.woo-box-flex.woo-box-alignCenter.woo-box-justifyBetween',
+    '.woo-box-flex.woo-box-column',
+]
+
+COMMENT_PANEL_SELECTORS = [
+    '[aria-label="评论"]',
+    'article button[title="评论"]',
+    'button:has-text("评论")',
+    '[role="button"]:has-text("评论")',
+    'a:has-text("评论")',
+]
+
+COMMENT_SUBMIT_SELECTORS = [
+    'button:has-text("发送")',
+    '[role="button"]:has-text("发送")',
+    'button:has-text("发布")',
+    '[role="button"]:has-text("发布")',
+    'button:has-text("评论")',
+]
+
+LOGIN_MARKER_SELECTORS = [
+    'input[name="username"]',
+    'input[name="password"]',
+    'input[type="password"]',
+    '.login-box',
+    '.woo-panel-login',
+]
+
+LOGGED_IN_COMPOSER_SELECTORS = [
+    'textarea',
+    '[contenteditable="true"]',
+    'div[role="textbox"]',
+]
+
 
 def configure_wslg_env():
     """Make headed Chromium work reliably when launched from non-interactive WSL shells."""
@@ -31,22 +77,93 @@ def safe_stem(text: str, limit: int = 48) -> str:
     return (cleaned or "comment")[:limit]
 
 
-def find_comment_locator(page, comment_text: str):
-    candidates = [
-        f'text={comment_text}',
-        f'blockquote:has-text("{comment_text}")',
-        f'div:has-text("{comment_text}")',
-        f'span:has-text("{comment_text}")',
-        f'p:has-text("{comment_text}")',
-    ]
+def first_visible_locator(root, selectors: list[str], timeout: int = 3000):
+    for selector in selectors:
+        locator = root.locator(selector).first
+        try:
+            if locator.count() == 0:
+                continue
+            locator.wait_for(state="visible", timeout=timeout)
+            return locator, selector
+        except Exception:
+            continue
+    return None, None
+
+
+def page_requires_login(page) -> bool:
+    composer, _ = first_visible_locator(page, LOGGED_IN_COMPOSER_SELECTORS, timeout=1000)
+    if composer is not None:
+        return False
+
+    marker, _ = first_visible_locator(page, LOGIN_MARKER_SELECTORS, timeout=1000)
+    if marker is not None:
+        return True
+
+    try:
+        login_text = page.get_by_text("登录").first
+        if login_text.count() > 0 and login_text.is_visible(timeout=1000):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def comment_text_selectors(comment_text: str) -> list[str]:
+    return [selector.format(comment_text=comment_text) for selector in COMMENT_TEXT_SELECTORS]
+
+
+def find_comment_locator_in_root(root, comment_text: str):
+    candidates = comment_text_selectors(comment_text)
     for selector in candidates:
-        locator = page.locator(selector).first
+        locator = root.locator(selector).first
         try:
             if locator.count() > 0 and locator.is_visible(timeout=1500):
                 return locator, selector
         except Exception:
             continue
     return None, None
+
+
+def find_comment_in_comments_root(page, comment_text: str):
+    root, _ = first_visible_locator(page, COMMENT_ROOT_SELECTORS, timeout=2000)
+    if root is None:
+        return None, None
+    return find_comment_locator_in_root(root, comment_text)
+
+
+def open_comment_panel(page):
+    locator, selector = first_visible_locator(page, COMMENT_PANEL_SELECTORS)
+    if locator is None:
+        return None
+    locator.click(timeout=3000)
+    return selector
+
+
+def submit_comment(page):
+    locator, selector = first_visible_locator(page, COMMENT_SUBMIT_SELECTORS)
+    if locator is None:
+        return None
+    locator.click(timeout=3000)
+    return selector
+
+
+def verify_comment_submission(page, comment_text: str, attempts: int = 4, wait_ms: int = 1200) -> bool:
+    for _ in range(attempts):
+        if page_requires_login(page):
+            return False
+        locator, _ = find_comment_in_comments_root(page, comment_text)
+        if locator is not None:
+            return True
+        if hasattr(page, "wait_for_timeout"):
+            try:
+                page.wait_for_timeout(wait_ms)
+            except Exception:
+                pass
+    return False
+
+
+def find_comment_locator(page, comment_text: str):
+    return find_comment_in_comments_root(page, comment_text)
 
 
 def draw_red_box(raw_path: Path, boxed_path: Path, box: dict):
@@ -147,23 +264,7 @@ def fill_comment_box(page, comment_text: str):
 
 
 def click_comment_button(page):
-    selectors = [
-        'button:has-text("评论")',
-        '[role="button"]:has-text("评论")',
-        'a:has-text("评论")',
-        'span:has-text("评论")',
-    ]
-    for selector in selectors:
-        locator = page.locator(selector).first
-        try:
-            if locator.count() == 0:
-                continue
-            locator.wait_for(state="visible", timeout=3000)
-            locator.click(timeout=3000)
-            return selector
-        except Exception:
-            continue
-    return None
+    return open_comment_panel(page)
 
 
 def ensure_post_liked(page):
@@ -251,6 +352,11 @@ def main():
         except PlaywrightTimeoutError:
             pass
 
+        if page_requires_login(page):
+            print("检测到当前页面处于登录/风控态，请先完成登录后再继续。", flush=True)
+            browser.close()
+            sys.exit(6)
+
         if args.like:
             print("[2.5/5] Ensuring the post is liked...", flush=True)
             like_status, like_selector, like_state = ensure_post_liked(page)
@@ -263,9 +369,9 @@ def main():
 
         if args.submit:
             print("[3/5] Trying to auto-fill and auto-submit the comment...", flush=True)
-            button_selector = click_comment_button(page)
+            button_selector = open_comment_panel(page)
             if button_selector:
-                print(f"已先点击评论按钮，按钮选择器: {button_selector}", flush=True)
+                print(f"已先打开评论面板，按钮选择器: {button_selector}", flush=True)
                 page.wait_for_timeout(1500)
             else:
                 print("未自动找到“评论”按钮，直接尝试定位评论输入框。", flush=True)
@@ -280,16 +386,27 @@ def main():
                 sys.exit(4)
             print(f"已填入评论，输入框选择器: {box_selector}", flush=True)
 
-            submit_selector = click_comment_button(page)
+            submit_selector = submit_comment(page)
             if not submit_selector:
-                print("未自动找到可提交的“评论”按钮。", flush=True)
+                print("未自动找到可提交的发送/发布按钮。", flush=True)
                 browser.close()
                 sys.exit(5)
-            print(f"已点击评论按钮，按钮选择器: {submit_selector}", flush=True)
+            print(f"已点击提交按钮，按钮选择器: {submit_selector}", flush=True)
             try:
                 page.wait_for_load_state("networkidle", timeout=6000)
             except PlaywrightTimeoutError:
                 pass
+            if page_requires_login(page):
+                print("提交后页面进入登录/风控态，未确认评论成功发布。", flush=True)
+                browser.close()
+                sys.exit(7)
+            if not verify_comment_submission(page, args.comment):
+                print("未确认评论成功出现在评论区，停止后续截图以避免假阳性。", flush=True)
+                page.screenshot(path=str(raw_path), full_page=True)
+                print(f"RAW_SCREENSHOT={raw_path.resolve()}", flush=True)
+                print("BOXED_SCREENSHOT=NOT_FOUND", flush=True)
+                browser.close()
+                sys.exit(8)
         elif args.capture_only:
             print("[3/5] Capture-only mode: skipping comment submission and locating existing comment only...", flush=True)
         else:
@@ -311,6 +428,11 @@ def main():
             print("已切换评论排序到：按时间", flush=True)
         except Exception:
             print("未能切换到“按时间”，将按当前排序继续查找。", flush=True)
+
+        if page_requires_login(page):
+            print("截图前检测到页面回到了登录/风控态，停止以避免误框。", flush=True)
+            browser.close()
+            sys.exit(9)
 
         locator, selector = find_comment_locator(page, args.comment)
         if locator is None:
