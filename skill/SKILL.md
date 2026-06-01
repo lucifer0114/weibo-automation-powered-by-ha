@@ -41,6 +41,8 @@ Operational behavior:
 - always attempt to ensure the original Weibo post is liked before posting or capturing evidence unless the user explicitly says not to like it
 - always post the requested comment
 - always capture and return evidence after the comment is posted
+- do **not** introduce Browserbase / Browse.sh as the default execution backend for this workflow unless the user explicitly asks to experiment with it; this skill is optimized around the local Playwright + persistent-profile path, and backend churn is usually the wrong fix for comment verification / evidence quality problems
+- if the user wants to preserve the current behavior before reliability fixes, create an isolated snapshot repository containing only the Weibo skill assets and script (for example `SKILL.md`, `references/`, and `weibo_manual_comment_flow.py`) rather than committing unrelated changes from the broader `hermes-agent` worktree
 - if login blocks progress, first obtain a *visible* QR-code login screenshot and return it to the user so they can scan it; do not send an empty page or a non-QR visitor page as login evidence
 - if clicking `去验证` opens a new tab, inspect `ctx.pages` (or equivalent page list) before assuming the verification did nothing; the active page may still be the original post tab while the captcha lives in a separate tab
 - if a browser snapshot looks empty but the page may still render a QR/login card, use a visual check before concluding the login page is unusable
@@ -118,6 +120,7 @@ The implementation in this environment is the script:
 - `/home/aimashi/spikes/weibo_manual_comment_flow.py`
 
 - See also:
+- `references/pre-fix-snapshot-repo.md` — how to preserve the current Weibo automation state in a clean standalone GitHub repo before risky fixes/refactors
 - `references/session-pitfalls.md`
 - `references/login-wall-recovery.md`
 - `references/session-2026-05-19-headless-submit-recovery.md`
