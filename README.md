@@ -18,17 +18,25 @@ Snapshot of the comment-evidence automation workflow, versioned through GitHub r
 - Previous baseline: [`v1.0.1`](https://github.com/lucifer0114/automation-powered-by-ha/releases/tag/v1.0.1)
 - Original snapshot: [`V1.0.0`](https://github.com/lucifer0114/automation-powered-by-ha/releases/tag/V1.0.0)
 
-## What `v1.0.2` changes since `v1.0.1`
-- updates the README to reflect the current release line and version progression
-- adds a dedicated development checklist for the next hardening cycle under `docs/plans/2026-06-02-v1.0.2-development-checklist.md`
-- documents the planned `v1.0.2` work in a more automation-friendly structure: shared finalization, machine-readable artifact output, stronger submission verification, and clearer downstream artifact metadata
-- further reduces public-facing wording exposure while keeping the repository purpose and release trail intact
+## Version history
 
-## What `v1.0.1` adds
+### `v1.0.2`
+**Changed**
+- updated the README to reflect the current release line and version progression
+- further reduced public-facing wording exposure while keeping the repository purpose and release trail intact
+
+**Added**
+- `docs/plans/2026-06-02-v1.0.2-development-checklist.md` as a dedicated checklist for the next hardening cycle
+- a clearer planning summary for the next milestone: shared finalization, machine-readable artifact output, stronger submission verification, and cleaner downstream artifact metadata
+
+### `v1.0.1`
+**Added**
 - structured single-line evidence output via `EVIDENCE=<json>`
 - final run summary output via `FINAL_SUMMARY=<json>`
-- stronger wait / submit verification hardening in the comment workflow
 - expanded regression coverage for evidence and reliability behavior
+
+**Changed**
+- stronger wait and submission-verification hardening in the automation flow
 
 ## Dependencies required to run `v1.0.2`
 This release is a **source snapshot**, so a new machine still needs the runtime dependencies below.
