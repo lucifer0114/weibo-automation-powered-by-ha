@@ -19,24 +19,10 @@ Snapshot of the comment-evidence automation workflow, versioned through GitHub r
 - Original snapshot: [`V1.0.0`](https://github.com/lucifer0114/automation-powered-by-ha/releases/tag/V1.0.0)
 
 ## Version history
-
-### `v1.0.2`
-**Changed**
-- updated the README to reflect the current release line and version progression
-- further reduced public-facing wording exposure while keeping the repository purpose and release trail intact
-
-**Added**
-- `docs/plans/2026-06-02-v1.0.2-development-checklist.md` as a dedicated checklist for the next hardening cycle
-- a clearer planning summary for the next milestone: shared finalization, machine-readable artifact output, stronger submission verification, and cleaner downstream artifact metadata
-
-### `v1.0.1`
-**Added**
-- structured single-line evidence output via `EVIDENCE=<json>`
-- final run summary output via `FINAL_SUMMARY=<json>`
-- expanded regression coverage for evidence and reliability behavior
-
-**Changed**
-- stronger wait and submission-verification hardening in the automation flow
+- full release history: [CHANGELOG.md](./CHANGELOG.md)
+- latest release: [`v1.0.2`](https://github.com/lucifer0114/automation-powered-by-ha/releases/tag/v1.0.2)
+- previous release: [`v1.0.1`](https://github.com/lucifer0114/automation-powered-by-ha/releases/tag/v1.0.1)
+- original snapshot: [`V1.0.0`](https://github.com/lucifer0114/automation-powered-by-ha/releases/tag/V1.0.0)
 
 ## Dependencies required to run `v1.0.2`
 This release is a **source snapshot**, so a new machine still needs the runtime dependencies below.
